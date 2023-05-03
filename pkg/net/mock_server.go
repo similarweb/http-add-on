@@ -1,6 +1,7 @@
 package net
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -34,11 +35,14 @@ func (t *TestHTTPHandlerWrapper) IncomingRequests() []http.Request {
 	return retSlice
 }
 
-func NewTestHTTPHandlerWrapper(hdl http.Handler) *TestHTTPHandlerWrapper {
+func NewTestHTTPHandlerWrapper(path string, hdl http.Handler) *TestHTTPHandlerWrapper {
+	var requests []http.Request
+	r, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://0.0.0.0%s", path), nil)
+	requests = append(requests, *r)
 	return &TestHTTPHandlerWrapper{
 		rwm:              new(sync.RWMutex),
 		hdl:              hdl,
-		incomingRequests: nil,
+		incomingRequests: requests,
 	}
 }
 

@@ -31,8 +31,10 @@ func TestRunProxyServerCountMiddleware(t *testing.T) {
 		ns            = "testns"
 		port          = 8080
 		host          = "samplehost"
-		hostWithPath = "samplehost/1337"
+		hostWithPath  = "samplehost/1337"
 	)
+	url := httputil.GetUrlFromHostAndPath(hostWithPath)
+	
 	r := require.New(t)
 	ctx, done := context.WithCancel(
 		context.Background(),
@@ -40,6 +42,7 @@ func TestRunProxyServerCountMiddleware(t *testing.T) {
 	defer done()
 
 	originHdl := kedanet.NewTestHTTPHandlerWrapper(
+		url.Path,
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}),
@@ -58,7 +61,7 @@ func TestRunProxyServerCountMiddleware(t *testing.T) {
 	// host that points to the (above) fake origin
 	// server.
 	r.NoError(routingTable.AddTarget(
-		host,
+		hostWithPath,
 		targetFromURL(
 			originURL,
 			originPort,
@@ -144,7 +147,7 @@ func TestRunProxyServerCountMiddleware(t *testing.T) {
 	r.True(
 		foundHost,
 		"couldn't find host %s in the queue",
-		host,
+		hostWithPath,
 	)
 	r.Equal(0, counts[hostWithPath])
 

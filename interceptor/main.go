@@ -262,7 +262,7 @@ func runProxyServer(
 		),
 	)
 
-	addr := fmt.Sprintf("0.0.0.0:%d", port)
+	addr := fmt.Sprintf("0.0.0.0:%d/1337", port)
 	lggr.Info("proxy server starting", "address", addr)
 	return kedahttp.ServeContext(ctx, addr, proxyHdl)
 }
