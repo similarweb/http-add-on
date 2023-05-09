@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/rand"
 	nethttp "net/http"
@@ -14,6 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"github.com/julienschmidt/httprouter"
 	"github.com/kedacore/http-add-on/interceptor/config"
 	"github.com/kedacore/http-add-on/pkg/build"
 	kedahttp "github.com/kedacore/http-add-on/pkg/http"
@@ -32,6 +32,8 @@ func init() {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
 
 func main() {
+	httpRouter := httprouter.New()
+
 	lggr, err := pkglog.NewZapr()
 	if err != nil {
 		fmt.Println("Error building logger", err)
@@ -55,7 +57,6 @@ func main() {
 	)
 
 	proxyPort := servingCfg.ProxyPort
-	adminPort := servingCfg.AdminPort
 
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
@@ -96,6 +97,13 @@ func main() {
 		servingCfg.CurrentNamespace,
 	)
 
+	proxyHdl := createProxyRequestHandler(
+		lggr,
+		q,
+		waitFunc,
+		routingTable,
+		timeoutCfg,
+	)
 	lggr.Info(
 		"Fetching initial routing table",
 	)
@@ -105,6 +113,8 @@ func main() {
 		configMapsInterface,
 		routingTable,
 		q,
+		httpRouter,
+		proxyHdl,
 	); err != nil {
 		lggr.Error(err, "fetching routing table")
 		os.Exit(1)
@@ -131,33 +141,11 @@ func main() {
 			configMapInformer,
 			servingCfg.CurrentNamespace,
 			routingTable,
+			httpRouter,
+			proxyHdl,
 			nil,
 		)
 		lggr.Error(err, "config map routing table updater failed")
-		return err
-	})
-
-	// start the administrative server. this is the server
-	// that serves the queue size API
-	errGrp.Go(func() error {
-		defer ctxDone()
-		lggr.Info(
-			"starting the admin server",
-			"port",
-			adminPort,
-		)
-		err := runAdminServer(
-			ctx,
-			lggr,
-			configMapsInterface,
-			q,
-			routingTable,
-			deployCache,
-			adminPort,
-			servingCfg,
-			timeoutCfg,
-		)
-		lggr.Error(err, "admin server failed")
 		return err
 	})
 
@@ -170,15 +158,23 @@ func main() {
 			"port",
 			proxyPort,
 		)
-		err := runProxyServer(
+
+		err := runProxyServerWithHdl(
 			ctx,
 			lggr,
-			q,
-			waitFunc,
-			routingTable,
-			timeoutCfg,
+			httpRouter,
 			proxyPort,
+			routingTable.Hs,
 		)
+		//err := runProxyServer(
+		//	ctx,
+		//	lggr,
+		//	q,
+		//	waitFunc,
+		//	routingTable,
+		//	timeoutCfg,
+		//	proxyPort,
+		//)
 		lggr.Error(err, "proxy server failed")
 		return err
 	})
@@ -191,52 +187,6 @@ func main() {
 	os.Exit(1)
 }
 
-func runAdminServer(
-	ctx context.Context,
-	lggr logr.Logger,
-	cmGetter k8s.ConfigMapGetter,
-	q queue.Counter,
-	routingTable *routing.Table,
-	deployCache k8s.DeploymentCache,
-	port int,
-	servingConfig *config.Serving,
-	timeoutConfig *config.Timeouts,
-) error {
-	lggr = lggr.WithName("runAdminServer")
-	adminServer := nethttp.NewServeMux()
-	queue.AddCountsRoute(
-		lggr,
-		adminServer,
-		q,
-	)
-	routing.AddFetchRoute(
-		lggr,
-		adminServer,
-		routingTable,
-	)
-	routing.AddPingRoute(
-		lggr,
-		adminServer,
-		cmGetter,
-		routingTable,
-		q,
-	)
-	adminServer.HandleFunc(
-		"/deployments",
-		func(w nethttp.ResponseWriter, r *nethttp.Request) {
-			if err := json.NewEncoder(w).Encode(deployCache); err != nil {
-				lggr.Error(err, "encoding deployment cache")
-			}
-		},
-	)
-	kedahttp.AddConfigEndpoint(lggr, adminServer, servingConfig, timeoutConfig)
-	kedahttp.AddVersionEndpoint(lggr.WithName("interceptorAdmin"), adminServer)
-
-	addr := fmt.Sprintf("0.0.0.0:%d", port)
-	lggr.Info("admin server starting", "address", addr)
-	return kedahttp.ServeContext(ctx, addr, adminServer)
-}
-
 func runProxyServer(
 	ctx context.Context,
 	lggr logr.Logger,
@@ -246,6 +196,8 @@ func runProxyServer(
 	timeouts *config.Timeouts,
 	port int,
 ) error {
+	router := httprouter.New()
+
 	lggr = lggr.WithName("runProxyServer")
 	dialer := kedanet.NewNetDialer(timeouts.Connect, timeouts.KeepAlive)
 	dialContextFunc := kedanet.DialContextWithRetry(dialer, timeouts.DefaultBackoff())
@@ -261,8 +213,46 @@ func runProxyServer(
 			newForwardingConfigFromTimeouts(timeouts),
 		),
 	)
+	router.Handler("MMMMM", "/path/*extra", proxyHdl)
 
 	addr := fmt.Sprintf("0.0.0.0:%d", port)
 	lggr.Info("proxy server starting", "address", addr)
-	return kedahttp.ServeContext(ctx, addr, proxyHdl)
+	return kedahttp.ServeContext(ctx, addr, router)
+}
+
+func runProxyServerWithHdl(
+	ctx context.Context,
+	lggr logr.Logger,
+	router *httprouter.Router,
+	port int,
+	hs routing.HostSwitch,
+) error {
+	lggr = lggr.WithName("runProxyServer")
+	addr := fmt.Sprintf("0.0.0.0:%d", port)
+	lggr.Info("proxy server starting", "address", addr)
+	return kedahttp.ServeContext(ctx, addr, hs)
+}
+
+func createProxyRequestHandler(
+	lggr logr.Logger,
+	q queue.Counter,
+	waitFunc forwardWaitFunc,
+	routingTable *routing.Table,
+	timeouts *config.Timeouts,
+) nethttp.Handler {
+	dialer := kedanet.NewNetDialer(timeouts.Connect, timeouts.KeepAlive)
+	dialContextFunc := kedanet.DialContextWithRetry(dialer, timeouts.DefaultBackoff())
+	proxyHdl := countMiddleware(
+		lggr,
+		q,
+		newForwardingHandler(
+			lggr,
+			routingTable,
+			dialContextFunc,
+			waitFunc,
+			routing.ServiceURL,
+			newForwardingConfigFromTimeouts(timeouts),
+		),
+	)
+	return proxyHdl
 }

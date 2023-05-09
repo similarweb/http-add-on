@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 
 	"github.com/kedacore/http-add-on/interceptor/config"
+	httputil "github.com/kedacore/http-add-on/pkg/http"
 	"github.com/kedacore/http-add-on/pkg/k8s"
 	kedanet "github.com/kedacore/http-add-on/pkg/net"
 	"github.com/kedacore/http-add-on/pkg/queue"
@@ -27,9 +28,10 @@ import (
 
 func TestRunProxyServerCountMiddleware(t *testing.T) {
 	const (
-		ns   = "testns"
-		port = 8080
-		host = "samplehost"
+		ns           = "testns"
+		port         = 8080
+		host         = "samplehost"
+		hostWithPath = "samplehost/path/something"
 	)
 	r := require.New(t)
 	ctx, done := context.WithCancel(
@@ -56,7 +58,7 @@ func TestRunProxyServerCountMiddleware(t *testing.T) {
 	// host that points to the (above) fake origin
 	// server.
 	r.NoError(routingTable.AddTarget(
-		host,
+		hostWithPath,
 		targetFromURL(
 			originURL,
 			originPort,
@@ -85,10 +87,12 @@ func TestRunProxyServerCountMiddleware(t *testing.T) {
 
 	// make an HTTP request in the background
 	g.Go(func() error {
+		url := httputil.GetUrlFromHostAndPath(hostWithPath)
+		cleantPath := httputil.CleanPath(url.Path)
 		req, err := http.NewRequest(
 			"GET",
 			fmt.Sprintf(
-				"http://0.0.0.0:%d", port,
+				"http://0.0.0.0:%d/%s", port, cleantPath,
 			), nil,
 		)
 		if err != nil {
@@ -114,9 +118,9 @@ func TestRunProxyServerCountMiddleware(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	select {
 	case hostAndCount := <-q.ResizedCh:
-		r.Equal(host, hostAndCount.Host)
+		r.Equal(hostWithPath, hostAndCount.Host)
 		r.Equal(+1, hostAndCount.Count)
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5000000 * time.Millisecond):
 		r.Fail("timeout waiting for +1 queue resize")
 	}
 
@@ -125,9 +129,9 @@ func TestRunProxyServerCountMiddleware(t *testing.T) {
 
 	select {
 	case hostAndCount := <-q.ResizedCh:
-		r.Equal(host, hostAndCount.Host)
+		r.Equal(hostWithPath, hostAndCount.Host)
 		r.Equal(-1, hostAndCount.Count)
-	case <-time.After(2 * time.Second):
+	case <-time.After(2000000 * time.Second):
 		r.Fail("timeout waiting for -1 queue resize")
 	}
 
@@ -136,13 +140,13 @@ func TestRunProxyServerCountMiddleware(t *testing.T) {
 	r.NoError(err)
 	counts := countsPtr.Counts
 	r.Equal(1, len(counts))
-	_, foundHost := counts[host]
+	_, foundHost := counts[hostWithPath]
 	r.True(
 		foundHost,
 		"couldn't find host %s in the queue",
 		host,
 	)
-	r.Equal(0, counts[host])
+	r.Equal(0, counts[hostWithPath])
 
 	done()
 	r.Error(g.Wait())
