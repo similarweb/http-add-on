@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -43,10 +44,9 @@ func newForwardingConfigFromTimeouts(t *config.Timeouts) forwardingConfig {
 // create a URL with url.Parse("https://...")
 func newForwardingHandler(
 	lggr logr.Logger,
-	routingTable *routing.Table,
+	routingTable routing.Table,
 	dialCtxFunc kedanet.DialContextFunc,
 	waitFunc forwardWaitFunc,
-	targetSvcURL routing.ServiceURLFunc,
 	fwdCfg forwardingConfig,
 ) http.Handler {
 	roundTripper := &http.Transport{
@@ -60,16 +60,8 @@ func newForwardingHandler(
 		ResponseHeaderTimeout: fwdCfg.respHeaderTimeout,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host, err := getHost(r)
-		if err != nil {
-			w.WriteHeader(400)
-			if _, err := w.Write([]byte("Host not found in request")); err != nil {
-				lggr.Error(err, "could not write error response to client")
-			}
-			return
-		}
-		routingTarget, err := routingTable.Lookup(host)
-		if err != nil {
+		routingTarget := routingTable.Route(r)
+		if routingTarget == nil {
 			w.WriteHeader(404)
 			if _, err := w.Write([]byte(fmt.Sprintf("Host %s not found", r.Host))); err != nil {
 				lggr.Error(err, "could not send error message to client")
@@ -82,7 +74,7 @@ func newForwardingHandler(
 		replicas, err := waitFunc(
 			waitFuncCtx,
 			routingTarget.Namespace,
-			routingTarget.Deployment,
+			routingTarget.Spec.ScaleTargetRef.Deployment,
 		)
 		if err != nil {
 			lggr.Error(err, "wait function failed, not forwarding request")
@@ -92,7 +84,13 @@ func newForwardingHandler(
 			}
 			return
 		}
-		targetSvcURL, err := targetSvcURL(*routingTarget)
+		//goland:noinspection HttpUrlsUsage
+		targetSvcURL, err := url.Parse(fmt.Sprintf(
+			"http://%s.%s:%d",
+			routingTarget.Spec.ScaleTargetRef.Service,
+			routingTarget.Namespace,
+			routingTarget.Spec.ScaleTargetRef.Port,
+		))
 		if err != nil {
 			lggr.Error(err, "forwarding failed")
 			w.WriteHeader(500)

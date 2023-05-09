@@ -21,7 +21,6 @@ import (
 	"github.com/kedacore/http-add-on/pkg/k8s"
 	kedanet "github.com/kedacore/http-add-on/pkg/net"
 	"github.com/kedacore/http-add-on/pkg/queue"
-	"github.com/kedacore/http-add-on/pkg/routing"
 	"github.com/kedacore/http-add-on/pkg/test"
 )
 
@@ -49,20 +48,19 @@ func TestRunProxyServerCountMiddleware(t *testing.T) {
 	r.NoError(err)
 	g, ctx := errgroup.WithContext(ctx)
 	q := queue.NewFakeCounter()
-	routingTable := routing.NewTable()
+
 	// set up a fake host that we can spoof
 	// when we later send request to the proxy,
 	// so that the proxy calculates a URL for that
 	// host that points to the (above) fake origin
-	// server.
-	r.NoError(routingTable.AddTarget(
-		host,
-		targetFromURL(
-			originURL,
-			originPort,
-			"testdepl",
-		),
-	))
+	// server
+	routingTable := newTestRoutingTable()
+	routingTable.memory[host] = targetFromURL(
+		originURL,
+		originPort,
+		"testdepl",
+	)
+
 	timeouts := &config.Timeouts{}
 	waiterCh := make(chan struct{})
 	waitFunc := func(_ context.Context, _, _ string) (int, error) {
@@ -170,9 +168,7 @@ func TestRunAdminServerDeploymentsEndpoint(t *testing.T) {
 		return runAdminServer(
 			ctx,
 			lggr,
-			k8s.FakeConfigMapGetter{},
 			queue.NewFakeCounter(),
-			routing.NewTable(),
 			deplCache,
 			port,
 			srvCfg,
@@ -229,9 +225,7 @@ func TestRunAdminServerConfig(t *testing.T) {
 		return runAdminServer(
 			ctx,
 			lggr,
-			k8s.FakeConfigMapGetter{},
 			queue.NewFakeCounter(),
-			routing.NewTable(),
 			k8s.NewFakeDeploymentCache(),
 			port,
 			srvCfg,

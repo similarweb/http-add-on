@@ -15,7 +15,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 
 	"github.com/kedacore/http-add-on/operator/controllers/http/config"
-	"github.com/kedacore/http-add-on/pkg/routing"
 	"github.com/kedacore/http-add-on/pkg/test"
 )
 
@@ -36,7 +35,6 @@ func TestRunAdminServerConfig(t *testing.T) {
 		return runAdminServer(
 			ctx,
 			lggr,
-			routing.NewTable(),
 			port,
 			baseCfg,
 			interceptorCfg,

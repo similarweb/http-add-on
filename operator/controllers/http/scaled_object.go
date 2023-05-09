@@ -2,7 +2,6 @@ package http
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/go-logr/logr"
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
@@ -36,7 +35,7 @@ func createOrUpdateScaledObject(
 
 	appScaledObject := k8s.NewScaledObject(
 		httpso.GetNamespace(),
-		fmt.Sprintf("%s-app", httpso.GetName()), // HTTPScaledObject name is the same as the ScaledObject name
+		httpso.GetName(), // HTTPScaledObject name is the same as the ScaledObject name
 		httpso.Spec.ScaleTargetRef.Deployment,
 		externalScalerHostName,
 		httpso.Spec.Host,
