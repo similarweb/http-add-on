@@ -216,6 +216,7 @@ func runProxyServer(
 	proxyHdl := countMiddleware(
 		lggr,
 		q,
+		routingTable,
 		newForwardingHandler(
 			lggr,
 			routingTable,
