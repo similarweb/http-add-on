@@ -20,7 +20,7 @@ func forwardRequest(
 	proxy.Transport = roundTripper
 	proxy.Director = func(req *http.Request) {
 		req.URL = fwdSvcURL
-		req.Host = fwdSvcURL.Host
+
 		req.URL.Path = r.URL.Path
 		req.URL.RawQuery = r.URL.RawQuery
 		// delete the incoming X-Forwarded-For header so the proxy
