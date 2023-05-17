@@ -45,7 +45,7 @@ func countMiddleware(
 			}
 			return
 		}
-		hostPathPattrn := httpso.Spec.Host
+		hostPathPattrn := httpso.Spec.Host + httpso.Spec.Path
 		if err := q.Resize(hostPathPattrn, +1); err != nil {
 			log.Printf("Error incrementing queue for %q (%s)", r.RequestURI, err)
 		}

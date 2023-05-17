@@ -64,7 +64,7 @@ func (tm tableMemory) treeKeyForHTTPSO(httpso *httpv1alpha1.HTTPScaledObject) []
 	if httpso == nil {
 		return nil
 	}
-	return tm.treeKey(httpso.Spec.Host, "" /* httpso.Spec.Path */)
+	return tm.treeKey(httpso.Spec.Host, httpso.Spec.Path)
 }
 
 func (tm tableMemory) treeKey(host string, path string) []byte {

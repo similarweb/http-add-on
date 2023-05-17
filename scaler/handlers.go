@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -27,7 +28,8 @@ const (
 )
 
 type impl struct {
-	lggr                    logr.Logger
+	lggr                 	logr.Logger
+	pathToMetricReplacer 	*strings.Replacer
 	pinger                  *queuePinger
 	httpsoInformer          informershttpv1alpha1.HTTPScaledObjectInformer
 	targetMetric            int64
@@ -48,6 +50,7 @@ func newImpl(
 		httpsoInformer:          httpsoInformer,
 		targetMetric:            defaultTargetMetric,
 		targetMetricInterceptor: defaultTargetMetricInterceptor,
+		pathToMetricReplacer:    strings.NewReplacer("/", "."),
 	}
 }
 
@@ -71,8 +74,9 @@ func (e *impl) IsActive(
 			Result: true,
 		}, nil
 	}
+	path, ok := scaledObject.ScalerMetadata["path"]
 
-	hostCount := e.pinger.counts()[host]
+	hostCount := e.pinger.counts()[host+path]
 	active := hostCount > 0
 	return &externalscaler.IsActiveResponse{
 		Result: active,
@@ -126,6 +130,8 @@ func (e *impl) GetMetricSpec(
 		lggr.Error(err, "no 'host' found in ScaledObject metadata")
 		return nil, err
 	}
+	path, ok := sor.ScalerMetadata["path"]
+
 	targetPendingRequests := e.targetMetricInterceptor
 	if host != interceptor {
 		httpso, err := e.httpsoInformer.Lister().HTTPScaledObjects(sor.Namespace).Get(sor.Name)
@@ -138,7 +144,7 @@ func (e *impl) GetMetricSpec(
 	}
 	metricSpecs := []*externalscaler.MetricSpec{
 		{
-			MetricName: host,
+			MetricName: host + e.pathToMetricReplacer.Replace(path),
 			TargetSize: targetPendingRequests,
 		},
 	}
@@ -159,14 +165,20 @@ func (e *impl) GetMetrics(
 		lggr.Error(err, "ScaledObjectRef", metricRequest.ScaledObjectRef)
 		return nil, err
 	}
+	path, _ := metricRequest.ScaledObjectRef.ScalerMetadata["path"]
+	//if !ok {
+	//	err := fmt.Errorf("no 'path' field found in ScaledObject metadata")
+	//	lggr.Error(err, "ScaledObjectRef", metricRequest.ScaledObjectRef)
+	//	return nil, err
+	//}
 
-	hostCount, ok := e.pinger.counts()[host]
+	hostCount, ok := e.pinger.counts()[host+path]
 	if !ok && host == interceptor {
 		hostCount = e.pinger.aggregate()
 	}
 	metricValues := []*externalscaler.MetricValue{
 		{
-			MetricName:  host,
+			MetricName:  host + e.pathToMetricReplacer.Replace(path),
 			MetricValue: int64(hostCount),
 		},
 	}
